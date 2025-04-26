@@ -2549,6 +2549,10 @@ static int janus_videoroom_get_fd_port(int fd);
 /* Thread responsible for a specific remote publisher */
 static void *janus_videoroom_remote_publisher_thread(void *data);
 
+//!!! SAMBA Token Map !!!
+static GHashTable *token_handle_map;
+static janus_mutex token_map_mutex = JANUS_MUTEX_INITIALIZER;
+
 typedef struct janus_videoroom_subscriber {
 	janus_videoroom_session *session;
 	janus_videoroom *room;	/* Room */
@@ -3739,6 +3743,10 @@ int janus_videoroom_init(janus_callbacks *callback, const char *config_path) {
 	}
 	rooms = g_hash_table_new_full(string_ids ? g_str_hash : g_int64_hash, string_ids ? g_str_equal : g_int64_equal,
 		(GDestroyNotify)g_free, (GDestroyNotify)janus_videoroom_room_destroy);
+		
+	//!!! SAMBA Token Map !!!
+	token_handle_map = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
+		
 	/* Iterate on all rooms */
 	if(config != NULL) {
 		GList *clist = janus_config_get_categories(config, NULL), *cl = clist;
@@ -4166,6 +4174,12 @@ void janus_videoroom_destroy(void) {
 	g_hash_table_destroy(rooms);
 	rooms = NULL;
 	janus_mutex_unlock(&rooms_mutex);
+	
+	//!!! SAMBA Token map !!!
+	janus_mutex_lock(&token_map_mutex);
+	g_hash_table_destroy(token_handle_map);
+	token_handle_map = NULL;
+	janus_mutex_unlock(&token_map_mutex);
 
 	g_async_queue_unref(messages);
 	messages = NULL;
@@ -10034,6 +10048,26 @@ static void *janus_videoroom_handler(void *data) {
 					janus_refcount_decrease(&videoroom->ref);
 					goto error;
 				}
+				
+				//!!! SAMBA Token map !!!
+				janus_mutex_lock(&token_map_mutex);
+				janus_ice_handle *ice_handle = (janus_ice_handle *)msg->handle->gateway_handle;
+				guint64 handle_id = ice_handle->handle_id;
+				gpointer token_pointer = (gpointer) g_strdup(ice_handle->token);
+				guint64 used_handle_id = g_hash_table_lookup(token_handle_map, token_pointer);
+				if (used_handle_id != NULL) {
+					janus_mutex_unlock(&token_map_mutex);
+					JANUS_LOG(LOG_ERR, "!!! Detected token in handle (%d) has been already used by another subscribe request in handle (%d) !!! \n", handle_id, used_handle_id);
+					error_code = JANUS_VIDEOROOM_ERROR_UNAUTHORIZED;
+					g_snprintf(error_cause, 512, "Token is already used");
+					janus_mutex_unlock(&videoroom->mutex);
+					janus_mutex_unlock(&sessions_mutex);
+					janus_refcount_decrease(&videoroom->ref);
+					goto error;				
+				}
+				g_hash_table_insert(token_handle_map, token_pointer, handle_id);
+				janus_mutex_unlock(&token_map_mutex);
+				
 				session = janus_videoroom_lookup_session(msg->handle);
 				if(!session) {
 					janus_mutex_unlock(&videoroom->mutex);
