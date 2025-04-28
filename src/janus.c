@@ -1421,6 +1421,7 @@ int janus_process_incoming_request(janus_request *request) {
 								janus_mutex_lock(&token_map_mutex);
 								if (g_hash_table_lookup(token_handle_map, unique_id)) {
 									janus_mutex_unlock(&token_map_mutex);
+									g_free(unique_id);
 									JANUS_LOG(LOG_ERR, "Unique id '%s' can't subscribe twice\n", unique_id);
 						            ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
 						            goto jsondone;
