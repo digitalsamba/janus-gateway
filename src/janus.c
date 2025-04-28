@@ -1412,25 +1412,23 @@ int janus_process_incoming_request(janus_request *request) {
 						const char *request_body_text = json_string_value(request_body);
 						const char *ptype_text = json_string_value(ptype);
 						if(request_body_text && ptype_text && !strcasecmp(request_body_text, "join") && !strcasecmp(ptype_text, "subscriber")) {
-							JANUS_LOG(LOG_ERR, "!!! Detected join subscriber request with token '%s'\n !!!", token_value);
+							JANUS_LOG(LOG_ERR, "Join subscriber request with token '%s'\n", token_value);
 							const char *unique_id_start = strstr(token_value, "uniqueid.");
 							if (unique_id_start) {
 								char* unique_id = g_strndup(unique_id_start + 9, 36);																
-								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id);
-								JANUS_LOG(LOG_ERR, "Token value2 is '%s'\n", unique_id);
+								JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
 								
 								janus_mutex_lock(&token_map_mutex);
 								if (g_hash_table_lookup(token_handle_map, unique_id)) {
 									janus_mutex_unlock(&token_map_mutex);
 									g_free(unique_id);
-									JANUS_LOG(LOG_ERR, "Unique id '%s' can't subscribe twice\n", unique_id);
+									JANUS_LOG(LOG_ERR, "!!! Unique id '%s' can't subscribe twice !!!\n", unique_id);
 						            ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
 						            goto jsondone;
 								} else {								
 									JANUS_LOG(LOG_ERR, "Inserting into map '%s'\n", unique_id);
-									g_hash_table_insert(token_handle_map, unique_id, NULL);
-									janus_mutex_unlock(&token_map_mutex);
-									JANUS_LOG(LOG_ERR, "Inserted into map '%s'\n", unique_id);						
+									g_hash_table_insert(token_handle_map, unique_id, janus_get_monotonic_time());
+									janus_mutex_unlock(&token_map_mutex);				
 								}								
 							}
 						}
