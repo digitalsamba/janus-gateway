@@ -1825,7 +1825,6 @@ room-<unique room ID>: {
 #include "../sdp-utils.h"
 #include "../utils.h"
 #include "../ip-utils.h"
-#include "../ice.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <poll.h>
@@ -10051,10 +10050,9 @@ static void *janus_videoroom_handler(void *data) {
 				}
 				
 				//!!! SAMBA Token map !!!
-				janus_mutex_lock(&token_map_mutex);
-				janus_ice_handle *ice_handle = (janus_ice_handle *)msg->handle->gateway_handle;
-				guint64 handle_id = ice_handle->handle_id;
-				char* token = ice_handle->token;
+				janus_mutex_lock(&token_map_mutex);				
+				guint64 handle_id = msg->handle->gateway_handle->handle_id;
+				char* token = msg->handle->gateway_handle->token;
 				
 				JANUS_LOG(LOG_ERR, "!!! ptype subscriber request, handle (%"SCNu64"), token %s !!! \n", handle_id, token);
 				
