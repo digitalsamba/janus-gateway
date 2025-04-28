@@ -1416,8 +1416,12 @@ int janus_process_incoming_request(janus_request *request) {
 							const char *unique_id_start = strstr(token_value, "uniqueid.");
 							if (unique_id_start) {
 								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id_start);
-								char* unique_id = new char[36];								
-								strncpy(unique_id, unique_id_start+9, 36);
+								
+								int id_len = 36;
+								char* unique_id = g_malloc(sizeof(char) * (id_len+1));							
+								strncpy(unique_id, unique_id_start+9, id_len);
+								unique_id[id_len] = '\0';
+								
 								JANUS_LOG(LOG_ERR, "Token value2 is '%s'\n", unique_id);
 							}
 						}
