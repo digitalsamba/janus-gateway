@@ -1825,6 +1825,7 @@ room-<unique room ID>: {
 #include "../sdp-utils.h"
 #include "../utils.h"
 #include "../ip-utils.h"
+#include "../ice.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <poll.h>
