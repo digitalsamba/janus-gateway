@@ -1397,7 +1397,7 @@ int janus_process_incoming_request(janus_request *request) {
 		}
 		json_t *body = json_object_get(root, "body");
 		
-		//!!! Samba Start !!!
+		//!!! Samba !!!
 		
 		const char *token_value = NULL;
 		if(janus_auth_is_enabled()) {
@@ -1405,43 +1405,38 @@ int janus_process_incoming_request(janus_request *request) {
 			if(token != NULL) {
 				token_value = json_string_value(token);
 				if(token_value) {
-					//g_strdup(json_string_value("request"));
-					
 					json_t *request_body = json_object_get(body, "request");
 					json_t *ptype = json_object_get(body, "ptype");			
 					
 					if (request_body != NULL && ptype != NULL) {
-
 						const char *request_body_text = json_string_value(request_body);
 						const char *ptype_text = json_string_value(ptype);
 						if(request_body_text && ptype_text && !strcasecmp(request_body_text, "join") && !strcasecmp(ptype_text, "subscriber")) {
 							JANUS_LOG(LOG_ERR, "!!! Detected join subscriber request with token '%s'\n !!!", token_value);
 							const char *unique_id_start = strstr(token_value, "uniqueid.");
 							if (unique_id_start) {
-								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id_start);
-								
-								int id_len = 36;
-								char* unique_id = g_strndup(unique_id_start + 9, id_len);								
-								
-								JANUS_LOG(LOG_ERR, "Token value2 is '%s'\n", unique_id);
+								char* unique_id = g_strndup(unique_id_start + 9, 36);																
+								JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
 								
 								janus_mutex_lock(&token_map_mutex);
-								g_hash_table_insert(token_handle_map, unique_id, NULL);
-								janus_mutex_unlock(&token_map_mutex);
-								
-								JANUS_LOG(LOG_ERR, "Inserted into map");
+								if (g_hash_table_lookup(token_handle_map, unique_id)) {
+									janus_mutex_unlock(&token_map_mutex);
+									JANUS_LOG(LOG_ERR, "Unique id '%s' can't subscribe twice\n", unique_id);
+						            ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
+						            goto jsondone;
+								} else {																	
+									g_hash_table_insert(token_handle_map, unique_id, NULL);
+									janus_mutex_unlock(&token_map_mutex);
+									JANUS_LOG(LOG_ERR, "Inserted into map '%s'\n", unique_id);									
+								}								
 							}
 						}
-						
-						/*JANUS_LOG(LOG_ERR, "Token '%s' can't access plugin '%s'\n", token_value, plugin_text);
-						ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Provided token can't access plugin '%s'", plugin_text);
-						goto jsondone;*/
 					}
 				}
 			}
 		}
 		
-		//!!! Samba End !!!
+		//!!! Samba !!!
 		
 		/* Is there an SDP attached? */
 		json_t *jsep = json_object_get(root, "jsep");
@@ -5521,9 +5516,9 @@ gint main(int argc, char *argv[]) {
 		exit(1);
 	}
 	
-	//!!! Samba !!!
-	janus_mutex_init(&token_map_mutex);
+	//!!! Samba !!!	
 	token_handle_map = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
+	janus_mutex_init(&token_map_mutex);
 
 	/* Sessions */
 	sessions = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, NULL);
