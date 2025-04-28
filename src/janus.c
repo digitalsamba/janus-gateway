@@ -1415,9 +1415,10 @@ int janus_process_incoming_request(janus_request *request) {
 							JANUS_LOG(LOG_ERR, "Detected join subscriber request with token '%s'\n", token_value);
 							const char *unique_id_start = strstr(token_value, "uniqueid.");
 							if (unique_id_start) {
+								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id_start);
 								char* unique_id = new char[36];								
 								strncpy(unique_id, unique_id_start+9, 36);
-								JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
+								JANUS_LOG(LOG_ERR, "Token value2 is '%s'\n", unique_id);
 							}
 						}
 						
