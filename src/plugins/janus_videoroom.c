@@ -10053,11 +10053,16 @@ static void *janus_videoroom_handler(void *data) {
 				janus_mutex_lock(&token_map_mutex);
 				janus_ice_handle *ice_handle = (janus_ice_handle *)msg->handle->gateway_handle;
 				guint64 handle_id = ice_handle->handle_id;
+				char* token = ice_handle->token;
+				
+				JANUS_LOG(LOG_ERR, "!!! ptype subscriber request, handle (%"SCNu64"), token %s !!! \n", handle_id, token);
+				
+				/*
 				gpointer token_pointer = (gpointer) g_strdup(ice_handle->token);
 				guint64 used_handle_id = g_hash_table_lookup(token_handle_map, token_pointer);
 				if (used_handle_id != NULL) {
 					janus_mutex_unlock(&token_map_mutex);
-					JANUS_LOG(LOG_ERR, "!!! Detected token in handle (%d) has been already used by another subscribe request in handle (%d) !!! \n", handle_id, used_handle_id);
+					JANUS_LOG(LOG_ERR, "!!! Detected token in handle (%"SCNu64") has been already used by another subscribe request in handle (%"SCNu64") !!! \n", handle_id, used_handle_id);
 					error_code = JANUS_VIDEOROOM_ERROR_UNAUTHORIZED;
 					g_snprintf(error_cause, 512, "Token is already used");
 					janus_mutex_unlock(&videoroom->mutex);
@@ -10065,7 +10070,7 @@ static void *janus_videoroom_handler(void *data) {
 					janus_refcount_decrease(&videoroom->ref);
 					goto error;				
 				}
-				g_hash_table_insert(token_handle_map, token_pointer, handle_id);
+				g_hash_table_insert(token_handle_map, token_pointer, handle_id);*/
 				janus_mutex_unlock(&token_map_mutex);
 				
 				session = janus_videoroom_lookup_session(msg->handle);
