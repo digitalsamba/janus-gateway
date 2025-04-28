@@ -1412,7 +1412,7 @@ int janus_process_incoming_request(janus_request *request) {
 						const char *request_body_text = json_string_value(request_body);
 						const char *ptype_text = json_string_value(ptype);
 						if(request_body_text && ptype_text && !strcasecmp(request_body_text, "join") && !strcasecmp(ptype_text, "subscriber")) {
-							JANUS_LOG(LOG_ERR, "Detected join subscriber request with token '%s'\n", token_value);
+							JANUS_LOG(LOG_ERR, "!!! Detected join subscriber request with token '%s'\n !!!", token_value);
 							const char *unique_id_start = strstr(token_value, "uniqueid.");
 							if (unique_id_start) {
 								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id_start);
