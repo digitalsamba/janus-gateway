@@ -1426,9 +1426,9 @@ int janus_process_incoming_request(janus_request *request) {
 						            ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
 						            goto jsondone;
 								} else {								
-									guint token_entries_count = g_hash_table_size(your_hash_table);
+									guint token_entries_count = g_hash_table_size(token_handle_map);
 									JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);
-									g_hash_table_insert(token_handle_map, unique_id, janus_get_monotonic_time());
+									g_hash_table_insert(token_handle_map, unique_id, g_new(gint64, janus_get_monotonic_time()));
 									janus_mutex_unlock(&token_map_mutex);				
 								}								
 							}
@@ -5519,7 +5519,7 @@ gint main(int argc, char *argv[]) {
 	}
 	
 	//!!! Samba !!!	
-	token_handle_map = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
+	token_handle_map = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, (GDestroyNotify)g_free);
 	janus_mutex_init(&token_map_mutex);
 
 	/* Sessions */
