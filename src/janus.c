@@ -55,6 +55,9 @@
 #define SHLIB_EXT ".so"
 #endif
 
+//!!! Samba !!!
+static GHashTable *token_handle_map;
+static janus_mutex token_map_mutex;
 
 /* Command line options */
 static janus_options options = { 0 };
@@ -1418,11 +1421,15 @@ int janus_process_incoming_request(janus_request *request) {
 								JANUS_LOG(LOG_ERR, "Token value1 is '%s'\n", unique_id_start);
 								
 								int id_len = 36;
-								char* unique_id = g_malloc(sizeof(char) * (id_len+1));							
-								strncpy(unique_id, unique_id_start+9, id_len);
-								unique_id[id_len] = '\0';
+								char* unique_id = g_strndup(unique_id_start + 9, id_len);								
 								
 								JANUS_LOG(LOG_ERR, "Token value2 is '%s'\n", unique_id);
+								
+								janus_mutex_lock(&token_map_mutex);
+								g_hash_table_insert(token_handle_map, unique_id, NULL);
+								janus_mutex_unlock(&token_map_mutex);
+								
+								JANUS_LOG(LOG_ERR, "Inserted into map");
 							}
 						}
 						
@@ -5513,6 +5520,10 @@ gint main(int argc, char *argv[]) {
 		janus_options_destroy();
 		exit(1);
 	}
+	
+	//!!! Samba !!!
+	janus_mutex_init(&token_map_mutex);
+	token_handle_map = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
 
 	/* Sessions */
 	sessions = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, NULL);
@@ -6069,6 +6080,9 @@ gint main(int argc, char *argv[]) {
 #endif
 	janus_rtp_forwarders_deinit();
 	janus_auth_deinit();
+	
+	//!!! Samba !!!
+	g_clear_pointer(&token_handle_map, g_hash_table_destroy);
 
 	JANUS_LOG(LOG_INFO, "Closing plugins:\n");
 	if(plugins != NULL && g_hash_table_size(plugins) > 0) {
