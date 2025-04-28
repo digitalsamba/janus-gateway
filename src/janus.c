@@ -974,6 +974,7 @@ static int janus_request_check_secret(janus_request *request, guint64 session_id
 			/* The token based authentication mechanism is enabled, check that the client provided it */
 			json_t *token = json_object_get(root, "token");
 			if(token && json_is_string(token) && janus_auth_check_token(json_string_value(token))) {
+				
 				token_authorized = TRUE;
 			}
 		}
@@ -1392,6 +1393,38 @@ int janus_process_incoming_request(janus_request *request) {
 			goto jsondone;
 		}
 		json_t *body = json_object_get(root, "body");
+		
+		//!!! Samba Start !!!
+		
+		const char *token_value = NULL;
+		if(janus_auth_is_enabled()) {
+			json_t *token = json_object_get(root, "token");
+			if(token != NULL) {
+				token_value = json_string_value(token);
+				if(token_value) {
+					//g_strdup(json_string_value("request"));
+					
+					json_t *request_body = json_object_get(body, "request");
+					json_t *ptype = json_object_get(body, "ptype");			
+					
+					if (request_body != NULL && ptype != NULL) {
+
+						const char *request_body_text = json_string_value(request_body);
+						const char *ptype_text = json_string_value(ptype);
+						if(request_body_text && ptype_text && !strcasecmp(request_body_text, "join") && !strcasecmp(ptype_text, "subscriber")) {
+							JANUS_LOG(LOG_ERR, "Detected join subscriber request with token '%s' in plugin '%s'\n", token_value, plugin_text);
+						}
+						
+						/*JANUS_LOG(LOG_ERR, "Token '%s' can't access plugin '%s'\n", token_value, plugin_text);
+						ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Provided token can't access plugin '%s'", plugin_text);
+						goto jsondone;*/
+					}
+				}
+			}
+		}
+		
+		//!!! Samba End !!!
+		
 		/* Is there an SDP attached? */
 		json_t *jsep = json_object_get(root, "jsep");
 		char *jsep_type = NULL;
