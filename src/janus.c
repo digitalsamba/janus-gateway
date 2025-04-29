@@ -1457,7 +1457,9 @@ int janus_process_incoming_request(janus_request *request) {
 								} else {								
 									guint token_entries_count = g_hash_table_size(token_handle_map);
 									JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);									
-									g_hash_table_insert(token_handle_map, unique_id, g_new(gint64, janus_get_monotonic_time()));
+									gint64 *timestamp_pointer = g_new(gint64, 1);
+									*timestamp_pointer = janus_get_monotonic_time();
+									g_hash_table_insert(token_handle_map, unique_id, timestamp_pointer);
 									
 									if (token_entries_count > garbage_collect_threshold) {
 										guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
