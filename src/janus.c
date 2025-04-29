@@ -1459,7 +1459,7 @@ int janus_process_incoming_request(janus_request *request) {
 									
 									if (token_entries_count > garbage_collect_threshold) {
 										guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
-										JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", token_entries_count);
+										JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", cleaned_entries);
 									}
 									
 									janus_mutex_unlock(&token_map_mutex);				
