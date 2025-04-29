@@ -56,8 +56,35 @@
 #endif
 
 //!!! Samba !!!
+const static gint garbage_collect_threshold = 1;
+const static gint timeout_token_minutes = 11;
 static GHashTable *token_handle_map;
 static janus_mutex token_map_mutex;
+
+gboolean remove_old_entries(gpointer key, gpointer value, gpointer user_data) {
+    gint64 now = janus_get_monotonic_time();
+	
+    gint64 *timestamp_ptr = (gint64 *) value;
+    if (timestamp_ptr == NULL) {
+        // Safety check: if the pointer is somehow NULL, remove it
+        return TRUE;
+    }
+
+    gint64 timestamp = *timestamp_ptr;
+
+    // Check if older than the threshold
+    if ((now - timestamp) > timeout_token_minutes * 60 * G_USEC_PER_SEC) {
+        // Remove this entry
+        return TRUE;
+    }
+
+    // Keep this entry
+    return FALSE;
+}
+
+guint cleanup_expired_token_entries(GHashTable *table) {
+    return g_hash_table_foreach_remove(table, remove_old_entries, NULL);
+}
 
 /* Command line options */
 static janus_options options = { 0 };
@@ -1427,8 +1454,14 @@ int janus_process_incoming_request(janus_request *request) {
 						            goto jsondone;
 								} else {								
 									guint token_entries_count = g_hash_table_size(token_handle_map);
-									JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);
+									JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);									
 									g_hash_table_insert(token_handle_map, unique_id, g_new(gint64, janus_get_monotonic_time()));
+									
+									if (token_entries_count > garbage_collect_threshold) {
+										guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
+										JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", token_entries_count);
+									}
+									
 									janus_mutex_unlock(&token_map_mutex);				
 								}								
 							}
