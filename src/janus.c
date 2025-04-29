@@ -72,7 +72,7 @@ gboolean remove_old_entries(gpointer key, gpointer value, gpointer user_data) {
 
     gint64 timestamp = *timestamp_ptr;
 	
-	JANUS_LOG(LOG_ERR, "Checking for expiration %"SCNu64" %"SCNu64"...\n", now - timestamp, ((gint64)timeout_token_minutes) * 60 * G_USEC_PER_SEC);
+	JANUS_LOG(LOG_ERR, "Checking for expiration now = %"SCNu64", timestamp = %"SCNu64", %"SCNu64" , %"SCNu64"...\n", now, timestamp, now - timestamp, ((gint64)timeout_token_minutes) * 60 * G_USEC_PER_SEC);
 
     // Check if older than the threshold
     if ((now - timestamp) > ((gint64)timeout_token_minutes) * 60 * G_USEC_PER_SEC) {
