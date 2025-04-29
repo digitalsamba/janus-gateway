@@ -56,8 +56,8 @@
 #endif
 
 //!!! Samba !!!
-const static gint garbage_collect_threshold = 1;
-const static gint timeout_token_minutes = 11;
+const static gint garbage_collect_threshold = 5000;
+const static gint timeout_token_minutes = 15;
 static GHashTable *token_handle_map;
 static janus_mutex token_map_mutex;
 
@@ -71,8 +71,6 @@ gboolean remove_old_entries(gpointer key, gpointer value, gpointer user_data) {
     }
 
     gint64 timestamp = *timestamp_ptr;
-	
-	JANUS_LOG(LOG_ERR, "Checking for expiration now = %"SCNu64", timestamp = %"SCNu64", %"SCNu64" , %"SCNu64"...\n", now, timestamp, now - timestamp, ((gint64)timeout_token_minutes) * 60 * G_USEC_PER_SEC);
 
     // Check if older than the threshold
     if ((now - timestamp) > ((gint64)timeout_token_minutes) * 60 * G_USEC_PER_SEC) {
@@ -1435,39 +1433,49 @@ int janus_process_incoming_request(janus_request *request) {
 				token_value = json_string_value(token);
 				if(token_value) {
 					json_t *request_body = json_object_get(body, "request");
-					json_t *ptype = json_object_get(body, "ptype");			
-					
-					if (request_body != NULL && ptype != NULL) {
+					if (request_body != NULL) {
 						const char *request_body_text = json_string_value(request_body);
-						const char *ptype_text = json_string_value(ptype);
-						if(request_body_text && ptype_text && !strcasecmp(request_body_text, "join") && !strcasecmp(ptype_text, "subscriber")) {
-							JANUS_LOG(LOG_ERR, "Join subscriber request with token '%s'\n", token_value);
-							const char *unique_id_start = strstr(token_value, "uniqueid.");
-							if (unique_id_start) {
-								char* unique_id = g_strndup(unique_id_start + 9, 36);																
-								JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
+						if (request_body_text) {
+							gboolean subscription_request = FALSE;
+							if (!strcasecmp(request_body_text, "watch")) {
+								subscription_request = TRUE;
+							} else if (!strcasecmp(request_body_text, "join")) {						
+								json_t *ptype = json_object_get(body, "ptype");
+								if (ptype != NULL) {
+									const char *ptype_text = json_string_value(ptype);											
+									subscription_request = ptype_text && !strcasecmp(ptype_text, "subscriber");
+								}
+							}							
 								
-								janus_mutex_lock(&token_map_mutex);
-								if (g_hash_table_lookup(token_handle_map, unique_id)) {
-									janus_mutex_unlock(&token_map_mutex);
-									JANUS_LOG(LOG_ERR, "!!! Unique id '%s' can't subscribe twice !!!\n", unique_id);
-									g_free(unique_id);									
-						            ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
-						            goto jsondone;
-								} else {								
-									guint token_entries_count = g_hash_table_size(token_handle_map);
-									JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);									
-									gint64 *timestamp_pointer = g_new(gint64, 1);
-									*timestamp_pointer = janus_get_monotonic_time();
-									g_hash_table_insert(token_handle_map, unique_id, timestamp_pointer);
+							if (subscription_request) {
+								JANUS_LOG(LOG_ERR, "Join subscriber request with token '%s'\n", token_value);
+								const char *unique_id_start = strstr(token_value, "uniqueid.");
+								if (unique_id_start) {
+									char* unique_id = g_strndup(unique_id_start + 9, 36);																
+									JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
 									
-									if (token_entries_count > garbage_collect_threshold) {
-										guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
-										JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", cleaned_entries);
-									}
-									
-									janus_mutex_unlock(&token_map_mutex);				
-								}								
+									janus_mutex_lock(&token_map_mutex);
+									if (g_hash_table_lookup(token_handle_map, unique_id)) {
+										janus_mutex_unlock(&token_map_mutex);
+										JANUS_LOG(LOG_ERR, "!!! Unique id '%s' can't subscribe twice !!!\n", unique_id);
+										g_free(unique_id);									
+										ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
+										goto jsondone;
+									} else {								
+										guint token_entries_count = g_hash_table_size(token_handle_map);
+										JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);
+										gint64 *timestamp_pointer = g_new(gint64, 1);
+										*timestamp_pointer = janus_get_monotonic_time();
+										g_hash_table_insert(token_handle_map, unique_id, timestamp_pointer);
+										
+										if (token_entries_count > garbage_collect_threshold) {
+											guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
+											JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", cleaned_entries);
+										}
+										
+										janus_mutex_unlock(&token_map_mutex);				
+									}								
+								}
 							}
 						}
 					}
