@@ -1447,30 +1447,29 @@ int janus_process_incoming_request(janus_request *request) {
 								}
 							}							
 								
-							if (subscription_request) {
-								JANUS_LOG(LOG_ERR, "Join subscriber request with token '%s'\n", token_value);
+							if (subscription_request) {								
 								const char *unique_id_start = strstr(token_value, "uniqueid.");
 								if (unique_id_start) {
-									char* unique_id = g_strndup(unique_id_start + 9, 36);																
-									JANUS_LOG(LOG_ERR, "Token value is '%s'\n", unique_id);
+									char* unique_id = g_strndup(unique_id_start + 9, 36);		
 									
-									janus_mutex_lock(&token_map_mutex);
+									janus_mutex_lock(&token_map_mutex);								
+									guint token_entries_count = g_hash_table_size(token_handle_map);
+									JANUS_LOG(LOG_INFO, "Join subscriber request with token '%s', amount of existing entries = %u\n", token_value, token_entries_count);
+									
 									if (g_hash_table_lookup(token_handle_map, unique_id)) {
 										janus_mutex_unlock(&token_map_mutex);
 										JANUS_LOG(LOG_ERR, "!!! Unique id '%s' can't subscribe twice !!!\n", unique_id);
 										g_free(unique_id);									
 										ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNAUTHORIZED_PLUGIN, "Unauthorized");
 										goto jsondone;
-									} else {								
-										guint token_entries_count = g_hash_table_size(token_handle_map);
-										JANUS_LOG(LOG_ERR, "Inserting into map '%s', amount of existing entries = %u\n", unique_id, token_entries_count);
+									} else {																		
 										gint64 *timestamp_pointer = g_new(gint64, 1);
 										*timestamp_pointer = janus_get_monotonic_time();
 										g_hash_table_insert(token_handle_map, unique_id, timestamp_pointer);
-										
+																				
 										if (token_entries_count > garbage_collect_threshold) {
 											guint cleaned_entries = cleanup_expired_token_entries(token_handle_map);
-											JANUS_LOG(LOG_ERR, "Garbage collected '%u' token entries\n", cleaned_entries);
+											JANUS_LOG(LOG_INFO, "Garbage collected '%u' token entries\n", cleaned_entries);
 										}
 										
 										janus_mutex_unlock(&token_map_mutex);				
