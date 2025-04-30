@@ -1450,6 +1450,13 @@ int janus_process_incoming_request(janus_request *request) {
 							if (subscription_request) {								
 								const char *unique_id_start = strstr(token_value, "uniqueid.");
 								if (unique_id_start) {
+									size_t remaining_len = strlen(unique_id_start + 9);
+									if (remaining_len < 36) {
+										JANUS_LOG(LOG_ERR, "Invalid token format: too short for unique ID, '%s'\n", token_value);
+										ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_INVALID_REQUEST, "Invalid token format");
+										goto jsondone;
+									}
+
 									char* unique_id = g_strndup(unique_id_start + 9, 36);		
 									
 									janus_mutex_lock(&token_map_mutex);								
