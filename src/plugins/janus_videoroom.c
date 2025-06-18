@@ -10175,11 +10175,15 @@ static void *janus_videoroom_handler(void *data) {
 						string_ids ? (gpointer)feed_id_str : (gpointer)&feed_id);
 					if(publisher == NULL || g_atomic_int_get(&publisher->destroyed) ||
 							!g_atomic_int_get(&publisher->session->started)) {
-						JANUS_LOG(LOG_ERR, "No such feed (%s)\n", feed_id_str);
-						error_code = JANUS_VIDEOROOM_ERROR_NO_SUCH_FEED;
+						JANUS_LOG(LOG_ERR, "(SAMBA) Ignoring -> No such feed (%s)\n", feed_id_str);
+						continue;
+
+						/*error_code = JANUS_VIDEOROOM_ERROR_NO_SUCH_FEED;
 						g_snprintf(error_cause, 512, "No such feed (%s)", feed_id_str);
 						janus_mutex_unlock(&videoroom->mutex);
-						/* Unref publishers we may have taken note of so far */
+
+						//Unref publishers we may have taken note of so far
+
 						while(publishers) {
 							publisher = (janus_videoroom_publisher *)publishers->data;
 							janus_refcount_decrease(&publisher->session->ref);
@@ -10188,7 +10192,7 @@ static void *janus_videoroom_handler(void *data) {
 						}
 						janus_mutex_unlock(&sessions_mutex);
 						janus_refcount_decrease(&videoroom->ref);
-						goto error;
+						goto error;*/
 					}
 					sub_e2ee = publisher->e2ee;
 					if(e2ee && !sub_e2ee) {
@@ -10239,11 +10243,15 @@ static void *janus_videoroom_handler(void *data) {
 						janus_mutex_lock(&publisher->streams_mutex);
 						if(g_hash_table_lookup(publisher->streams_bymid, mid) == NULL) {
 							janus_mutex_unlock(&publisher->streams_mutex);
-							JANUS_LOG(LOG_ERR, "No such mid '%s' in feed (%s)\n", mid, feed_id_str);
+
+							JANUS_LOG(LOG_ERR, "(SAMBA) Ignoring -> No such mid '%s' in feed (%s)\n", mid, feed_id_str);
+							continue;
+
+							/*JANUS_LOG(LOG_ERR, "No such mid '%s' in feed (%s)\n", mid, feed_id_str);
 							error_code = JANUS_VIDEOROOM_ERROR_NO_SUCH_FEED;
 							g_snprintf(error_cause, 512, "No such mid '%s' in feed (%s)", mid, feed_id_str);
 							janus_mutex_unlock(&videoroom->mutex);
-							/* Unref publishers we may have taken note of so far */
+							//Unref publishers we may have taken note of so far 
 							while(publishers) {
 								publisher = (janus_videoroom_publisher *)publishers->data;
 								janus_refcount_decrease(&publisher->session->ref);
@@ -10252,7 +10260,7 @@ static void *janus_videoroom_handler(void *data) {
 							}
 							janus_mutex_unlock(&sessions_mutex);
 							janus_refcount_decrease(&videoroom->ref);
-							goto error;
+							goto error;*/
 						}
 						janus_mutex_unlock(&publisher->streams_mutex);
 					}
