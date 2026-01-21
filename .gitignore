@@ -2,6 +2,7 @@ cmdline.c
 cmdline.h
 version.c
 docs/html/
+janus-gateway.pc
 
 janus
 janus-cfgconv
@@ -23,6 +24,7 @@ Makefile.in
 /depcomp
 /compile
 /install-sh
+/install-sh~
 /ltmain.sh
 
 /config.log

@@ -78,7 +78,8 @@
 {
 	"event" : "generated",
 	"type" : "<offer|answer, depending on the nature of the provided JSEP>",
-	"sdp" : "<barebone SDP content>"
+	"sdp" : "<barebone SDP content>",
+	"unique_id" : "<unique UUID of this session in this plugin, needed for some requests>
 }
 \endverbatim
  *
@@ -104,7 +105,8 @@
 \verbatim
 {
 	"event" : "processed",
-	"srtp" : "<whether the barebone SDP mandates (sdes_mandatory) or offers (sdes_optional) SRTP support; optional>"
+	"srtp" : "<whether the barebone SDP mandates (sdes_mandatory) or offers (sdes_optional) SRTP support; optional>",
+	"unique_id" : "<unique UUID of this session in this plugin, needed for some requests>
 }
 \endverbatim
  *
@@ -354,6 +356,7 @@ typedef struct janus_nosip_media {
 
 typedef struct janus_nosip_session {
 	janus_plugin_session *handle;
+	char *unique_id;
 	gint64 sdp_version;
 	janus_nosip_media media;	/* Media gatewaying stuff (same stuff as the SIP plugin) */
 	janus_sdp *sdp;				/* The SDP this user sent */
@@ -369,6 +372,7 @@ typedef struct janus_nosip_session {
 	janus_mutex mutex;
 } janus_nosip_session;
 static GHashTable *sessions;
+static GHashTable *unique_ids;
 static janus_mutex sessions_mutex = JANUS_MUTEX_INITIALIZER;
 
 static void janus_nosip_srtp_cleanup(janus_nosip_session *session);
@@ -387,12 +391,16 @@ static void janus_nosip_session_free(const janus_refcount *session_ref) {
 	/* This session can be destroyed, free all the resources */
 	janus_sdp_destroy(session->sdp);
 	session->sdp = NULL;
+	g_free(session->unique_id);
+	session->unique_id = NULL;
 	g_free(session->media.remote_audio_ip);
 	session->media.remote_audio_ip = NULL;
 	g_free(session->media.remote_video_ip);
 	session->media.remote_video_ip = NULL;
 	janus_nosip_srtp_cleanup(session);
 	session->handle = NULL;
+	janus_mutex_destroy(&session->mutex);
+	janus_mutex_destroy(&session->rec_mutex);
 	g_free(session);
 	session = NULL;
 }
@@ -840,6 +848,7 @@ int janus_nosip_init(janus_callbacks *callback, const char *config_path) {
 	JANUS_LOG(LOG_VERB, "Local IP set to %s\n", local_ip);
 
 	sessions = g_hash_table_new_full(NULL, NULL, NULL, (GDestroyNotify)janus_nosip_session_destroy);
+	unique_ids = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
 	messages = g_async_queue_new_full((GDestroyNotify) janus_nosip_message_free);
 	/* This is the callback we'll need to invoke to contact the Janus core */
 	gateway = callback;
@@ -899,6 +908,8 @@ void janus_nosip_destroy(void) {
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_destroy(sessions);
 	sessions = NULL;
+	g_hash_table_destroy(unique_ids);
+	unique_ids = NULL;
 	janus_mutex_unlock(&sessions_mutex);
 	g_async_queue_unref(messages);
 	messages = NULL;
@@ -1015,6 +1026,14 @@ void janus_nosip_create_session(janus_plugin_session *handle, int *error) {
 
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_insert(sessions, handle, session);
+	while(session->unique_id == NULL) {
+		session->unique_id = janus_random_uuid();
+		if(g_hash_table_lookup(unique_ids, session->unique_id) != NULL) {
+			g_free(session->unique_id);
+			session->unique_id = NULL;
+		}
+		g_hash_table_insert(unique_ids, g_strdup(session->unique_id), session);
+	}
 	janus_mutex_unlock(&sessions_mutex);
 
 	return;
@@ -1035,6 +1054,8 @@ void janus_nosip_destroy_session(janus_plugin_session *handle, int *error) {
 	}
 	JANUS_LOG(LOG_VERB, "Destroying NoSIP session (%p)...\n", session);
 	janus_nosip_hangup_media_internal(handle);
+	if(session->unique_id)
+		g_hash_table_remove(sessions, session->unique_id);
 	g_hash_table_remove(sessions, handle);
 	janus_mutex_unlock(&sessions_mutex);
 	return;
@@ -1055,6 +1076,7 @@ json_t *janus_nosip_query_session(janus_plugin_session *handle) {
 	janus_mutex_unlock(&sessions_mutex);
 	/* Provide some generic info, e.g., if we're in a call and with whom */
 	json_t *info = json_object();
+	json_object_set_new(info, "unique_id", json_string(session->unique_id));
 	if(session->sdp) {
 		json_object_set_new(info, "srtp-required", json_string(session->media.require_srtp ? "yes" : "no"));
 		json_object_set_new(info, "sdes-local", json_string(session->media.has_srtp_local ? "yes" : "no"));
@@ -1550,6 +1572,7 @@ static void *janus_nosip_handler(void *data) {
 					json_object_set_new(info, "event", json_string("generated"));
 					json_object_set_new(info, "type", json_string(offer ? "offer" : "answer"));
 					json_object_set_new(info, "sdp", json_string(sdp));
+					json_object_set_new(info, "unique_id", json_string(session->unique_id));
 					gateway->notify_event(&janus_nosip_plugin, session->handle, info);
 				}
 				/* If the user negotiated simulcasting, just stick with the base substream */
@@ -1574,6 +1597,7 @@ static void *janus_nosip_handler(void *data) {
 				json_object_set_new(result, "sdp", json_string(sdp));
 				if(sdp_update)
 					json_object_set_new(result, "update", json_true());
+				json_object_set_new(result, "unique_id", json_string(session->unique_id));
 				g_free(sdp);
 			} else {
 				/* We got a barebone offer or answer from our peer: process it accordingly */
@@ -1610,6 +1634,7 @@ static void *janus_nosip_handler(void *data) {
 					json_object_set_new(info, "event", json_string("processed"));
 					json_object_set_new(info, "type", json_string(offer ? "offer" : "answer"));
 					json_object_set_new(info, "sdp", json_string(msg_sdp));
+					json_object_set_new(info, "unique_id", json_string(session->unique_id));
 					gateway->notify_event(&janus_nosip_plugin, session->handle, info);
 				}
 				/* Send SDP to the browser */
@@ -1621,6 +1646,7 @@ static void *janus_nosip_handler(void *data) {
 				}
 				if(sdp_update)
 					json_object_set_new(result, "update", json_true());
+				json_object_set_new(result, "unique_id", json_string(session->unique_id));
 				localjsep = json_pack("{ssss}", "type", msg_sdp_type, "sdp", msg_sdp);
 			}
 			/* If this is an answer, start the media */
@@ -2057,6 +2083,26 @@ char *janus_nosip_sdp_manipulate(janus_nosip_session *session, janus_sdp *sdp, g
 		}
 		g_free(m->c_addr);
 		m->c_addr = g_strdup(sdp_ip ? sdp_ip : local_ip);
+		/* Get rid of some extra attributes to try and keep the SDP short enough */
+		GList *tempA = m->attributes;
+		while(tempA) {
+			janus_sdp_attribute *a = (janus_sdp_attribute *)tempA->data;
+			/* These are attributes we handle ourselves, the plugins don't need them */
+			if(!strcasecmp(a->name, "mid")
+					|| !strcasecmp(a->name, "msid")
+					|| !strcasecmp(a->name, "bundle-only")
+					|| (!strcasecmp(a->name, "rtcp-fb") && a->value && strstr(a->value, "nack pli") == NULL)
+					|| (!strcasecmp(a->name, "extmap") && a->value &&
+						strstr(a->value, JANUS_RTP_EXTMAP_AUDIO_LEVEL) == NULL &&
+						strstr(a->value, JANUS_RTP_EXTMAP_VIDEO_ORIENTATION) == NULL)) {
+				m->attributes = g_list_remove(m->attributes, a);
+				tempA = m->attributes;
+				janus_sdp_attribute_destroy(a);
+				continue;
+			}
+			tempA = tempA->next;
+			continue;
+		}
 		if(answer && (m->type == JANUS_SDP_AUDIO || m->type == JANUS_SDP_VIDEO)) {
 			/* Check which codec was negotiated eventually */
 			int pt = -1;
