@@ -21,6 +21,7 @@ typedef struct janus_options {
 	gboolean log_stdout;
 	const char *log_file;
 	const char *log_rotate_sig;
+	int64_t check_openfiles_limit;
 	const char *cwd_path;
 	const char *interface;
 	const char *plugins_folder;
@@ -54,6 +55,7 @@ typedef struct janus_options {
 	const char *apisecret;
 	gboolean token_auth;
 	const char *token_auth_secret;
+	gboolean restrict_info_api;
 	gboolean event_handlers;
 	gboolean no_webrtc_encryption;
 	gboolean print_version;

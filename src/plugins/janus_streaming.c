@@ -207,6 +207,9 @@ rtsp_timeout = communication timeout (CURLOPT_TIMEOUT) for cURL call gathering t
 rtsp_conn_timeout = connection timeout for cURL (CURLOPT_CONNECTTIMEOUT) call gathering the RTSP information (default=5s)
 rtsp_notify_changes = if set to true, will send an event to connected users when the RTSP session
 	gets disconnected, and when it's reconnected (default=false)
+rtsp_fmtp_sps = what the plugin should do it if finds SPS/PPS info in an SDP fmtp attribute sent by the RTSP server;
+	the default value is "always", to manually inject them in RTP traffic, as that's what WebRTC endpoints need;
+	to disable this behaviour (e.g., if the camera already sends SPS/PPS in-stream via RTP too) use "never"
 \endverbatim
  *
  * Notice that attributes like \c audioport or \c videopt only make sense
@@ -988,6 +991,9 @@ multistream-test: {
 #define JANUS_STREAMING_DEFAULT_CURL_TIMEOUT 10L /* Communication timeout for cURL. */
 #define JANUS_STREAMING_DEFAULT_CURL_CONNECT_TIMEOUT 5L /* Connection timeout for cURL. */
 
+/* Arbitrary cap for helper threads */
+#define JANUS_STREAMING_HELPER_THREADS_CAP	100
+
 /* Plugin information */
 #define JANUS_STREAMING_VERSION			11
 #define JANUS_STREAMING_VERSION_STRING	"0.0.11"
@@ -1143,6 +1149,7 @@ static struct janus_json_parameter rtsp_parameters[] = {
 	{"rtsp_timeout", JSON_INTEGER, JANUS_JSON_PARAM_POSITIVE},
 	{"rtsp_conn_timeout", JSON_INTEGER, JANUS_JSON_PARAM_POSITIVE},
 	{"rtsp_notify_changes", JANUS_JSON_BOOL, 0},
+	{"rtsp_fmtp_sps", JSON_STRING, 0},
 	{"audiocodec", JSON_STRING, 0},
 	{"audiortpmap", JSON_STRING, 0},	/* Deprecated */
 	{"audiofmtp", JSON_STRING, 0},
@@ -1394,6 +1401,7 @@ typedef struct janus_streaming_rtp_source {
 	char *rtsp_stream_uri;
 	gboolean rtsp_quirk;
 	gboolean rtsp_notify_changes;
+	gboolean rtsp_fmtp_sps;
 	gint64 ka_timeout;
 	char *rtsp_ahost, *rtsp_vhost;
 	janus_streaming_codecs rtsp_acodecs, rtsp_vcodecs;
@@ -1580,7 +1588,7 @@ janus_streaming_mountpoint *janus_streaming_create_file_source(
 janus_streaming_mountpoint *janus_streaming_create_rtsp_source(
 		uint64_t id, char *id_str, char *name, char *desc, char *metadata,
 		char *url, char *username, char *password,
-		gboolean quirk, gboolean notify_changes,
+		gboolean quirk, gboolean notify_changes, gboolean fmtp_sps,
 		gboolean doaudio, int audiopt, char *acodec, char *afmtp,
 		gboolean dovideo, int videopt, char *vcodec, char *vfmtp,
 		uint16_t bufferkf_ms, uint32_t bufferkf_bytes,
@@ -2016,6 +2024,18 @@ static char *janus_streaming_parse_sprop(char *sprop, int *len) {
 	return sps;
 }
 
+/* Helper method to check if a file has a specific extension */
+static gboolean janus_streaming_check_extension(const char *filename, const char *extension) {
+	if(filename == NULL || extension == NULL)
+		return FALSE;
+	size_t flen = strlen(filename);
+	size_t elen = strlen(extension);
+	if(flen == 0 || elen == 0 || flen < elen)
+		return FALSE;
+	const char *suffix = filename + flen - elen;
+	return (strstr(suffix, extension) == suffix);
+}
+
 /* Error codes */
 #define JANUS_STREAMING_ERROR_NO_MESSAGE			450
 #define JANUS_STREAMING_ERROR_INVALID_JSON			451
@@ -2100,7 +2120,7 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 		janus_config_item *range = janus_config_get(config, config_general, janus_config_type_item, "rtp_port_range");
 		if(range && range->value) {
 			/* Split in min and max port */
-			char *maxport = strrchr(range->value, '-');
+			char *maxport = (char *)strrchr(range->value, '-');
 			if(maxport != NULL) {
 				*maxport = '\0';
 				maxport++;
@@ -2702,11 +2722,19 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 					cl = cl->next;
 					continue;
 				}
+				if(strstr(file->value, "../") != NULL) {
+					JANUS_LOG(LOG_ERR, "Can't add 'live' mountpoint '%s', can't use relative paths\n", cat->name);
+					cl = cl->next;
+					continue;
+				}
 #ifdef HAVE_LIBOGG
-				if(!strstr(file->value, ".opus") && !strstr(file->value, ".alaw") && !strstr(file->value, ".mulaw")) {
+				if(!janus_streaming_check_extension(file->value, ".opus") &&
+						!janus_streaming_check_extension(file->value, ".alaw") &&
+						!janus_streaming_check_extension(file->value, ".mulaw")) {
 					JANUS_LOG(LOG_ERR, "Can't add 'live' mountpoint '%s', unsupported format (we only support Opus and raw mu-Law/a-Law files right now)\n", cat->name);
 #else
-				if(!strstr(file->value, ".alaw") && !strstr(file->value, ".mulaw")) {
+				if(!janus_streaming_check_extension(file->value, ".alaw") &&
+						!janus_streaming_check_extension(file->value, ".mulaw")) {
 					JANUS_LOG(LOG_ERR, "Can't add 'live' mountpoint '%s', unsupported format (we only support raw mu-Law and a-Law files right now)\n", cat->name);
 #endif
 					cl = cl->next;
@@ -2776,11 +2804,19 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 					cl = cl->next;
 					continue;
 				}
+				if(strstr(file->value, "../") != NULL) {
+					JANUS_LOG(LOG_ERR, "Can't add 'ondemand' mountpoint '%s', can't use relative paths\n", cat->name);
+					cl = cl->next;
+					continue;
+				}
 #ifdef HAVE_LIBOGG
-				if(!strstr(file->value, ".opus") && !strstr(file->value, ".alaw") && !strstr(file->value, ".mulaw")) {
+				if(!janus_streaming_check_extension(file->value, ".opus") &&
+						!janus_streaming_check_extension(file->value, ".alaw") &&
+						!janus_streaming_check_extension(file->value, ".mulaw")) {
 					JANUS_LOG(LOG_ERR, "Can't add 'live' mountpoint '%s', unsupported format (we only support Opus and raw mu-Law/a-Law files right now)\n", cat->name);
 #else
-				if(!strstr(file->value, ".alaw") && !strstr(file->value, ".mulaw")) {
+				if(!janus_streaming_check_extension(file->value, ".alaw") &&
+						!janus_streaming_check_extension(file->value, ".mulaw")) {
 					JANUS_LOG(LOG_ERR, "Can't add 'ondemand' mountpoint '%s', unsupported format (we only support raw mu-Law and a-Law files right now)\n", cat->name);
 #endif
 					cl = cl->next;
@@ -2857,6 +2893,7 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 				janus_config_item *rtsp_timeout = janus_config_get(config, cat, janus_config_type_item, "rtsp_timeout");
 				janus_config_item *rtsp_conn_timeout = janus_config_get(config, cat, janus_config_type_item, "rtsp_conn_timeout");
 				janus_config_item *rtsp_notify_changes = janus_config_get(config, cat, janus_config_type_item, "rtsp_notify_changes");
+				janus_config_item *rtsp_fmtp_sps = janus_config_get(config, cat, janus_config_type_item, "rtsp_fmtp_sps");
 				janus_network_address iface_value;
 				if(file == NULL || file->value == NULL) {
 					JANUS_LOG(LOG_ERR, "Can't add 'rtsp' mountpoint '%s', missing mandatory information...\n", cat->name);
@@ -2866,6 +2903,16 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 				gboolean is_private = priv && priv->value && janus_is_true(priv->value);
 				gboolean rtsp_quirk = quirk && quirk->value && janus_is_true(quirk->value);
 				gboolean notify_changes = rtsp_notify_changes && rtsp_notify_changes->value && janus_is_true(rtsp_notify_changes->value);
+				gboolean fmtp_sps = TRUE;
+				if(rtsp_fmtp_sps && rtsp_fmtp_sps->value) {
+					if(!strcasecmp(rtsp_fmtp_sps->value, "always")) {
+						fmtp_sps = TRUE;
+					} else if(!strcasecmp(rtsp_fmtp_sps->value, "never")) {
+						fmtp_sps = FALSE;
+					} else {
+						JANUS_LOG(LOG_WARN, "Unsupported value '%s' for rtsp_fmtp_sps\n", rtsp_fmtp_sps->value);
+					}
+				}
 				gboolean doaudio = audio && audio->value && janus_is_true(audio->value);
 				gboolean dovideo = video && video->value && janus_is_true(video->value);
 				if(video && vkf && vkf->value && janus_is_true(vkf->value)) {
@@ -2927,7 +2974,7 @@ int janus_streaming_init(janus_callbacks *callback, const char *config_path) {
 						(char *)file->value,
 						username ? (char *)username->value : NULL,
 						password ? (char *)password->value : NULL,
-						rtsp_quirk, notify_changes,
+						rtsp_quirk, notify_changes, fmtp_sps,
 						doaudio,
 						(apt && apt->value) ? atoi(apt->value) : -1,
 						(char *)audiocodec,
@@ -4120,11 +4167,23 @@ static json_t *janus_streaming_process_synchronous_request(janus_streaming_sessi
 				goto prepare_response;
 			}
 			char *filename = (char *)json_string_value(file);
+			if(strstr(filename, "../") != NULL) {
+				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, can't use relative paths\n");
+				error_code = JANUS_STREAMING_ERROR_CANT_CREATE;
+				g_snprintf(error_cause, 512, "Can't add 'live' stream, can't use relative paths");
+				janus_mutex_lock(&mountpoints_mutex);
+				g_hash_table_remove(mountpoints_temp, string_ids ? (gpointer)mpid_str : (gpointer)&mpid);
+				janus_mutex_unlock(&mountpoints_mutex);
+				goto prepare_response;
+			}
 #ifdef HAVE_LIBOGG
-			if(!strstr(filename, ".opus") && !strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+			if(!janus_streaming_check_extension(filename, ".opus") &&
+					!janus_streaming_check_extension(filename, ".alaw") &&
+					!janus_streaming_check_extension(filename, ".mulaw")) {
 				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, unsupported format (we only support Opus and raw mu-Law/a-Law files right now)\n");
 #else
-			if(!strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+			if(!janus_streaming_check_extension(filename, ".alaw") &&
+					!janus_streaming_check_extension(filename, ".mulaw")) {
 				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, unsupported format (we only support raw mu-Law and a-Law files right now)\n");
 #endif
 				error_code = JANUS_STREAMING_ERROR_CANT_CREATE;
@@ -4210,11 +4269,23 @@ static json_t *janus_streaming_process_synchronous_request(janus_streaming_sessi
 				goto prepare_response;
 			}
 			char *filename = (char *)json_string_value(file);
+			if(strstr(filename, "../") != NULL) {
+				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, can't use relative paths\n");
+				error_code = JANUS_STREAMING_ERROR_CANT_CREATE;
+				g_snprintf(error_cause, 512, "Can't add 'live' stream, can't use relative paths");
+				janus_mutex_lock(&mountpoints_mutex);
+				g_hash_table_remove(mountpoints_temp, string_ids ? (gpointer)mpid_str : (gpointer)&mpid);
+				janus_mutex_unlock(&mountpoints_mutex);
+				goto prepare_response;
+			}
 #ifdef HAVE_LIBOGG
-			if(!strstr(filename, ".opus") && !strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+			if(!janus_streaming_check_extension(filename, ".opus") &&
+					!janus_streaming_check_extension(filename, ".alaw") &&
+					!janus_streaming_check_extension(filename, ".mulaw")) {
 				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, unsupported format (we only support Opus and raw mu-Law/a-Law files right now)\n");
 #else
-			if(!strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+			if(!janus_streaming_check_extension(filename, ".alaw") &&
+					!janus_streaming_check_extension(filename, ".mulaw")) {
 				JANUS_LOG(LOG_ERR, "Can't add 'live' stream, unsupported format (we only support raw mu-Law and a-Law files right now)\n");
 #endif
 				JANUS_LOG(LOG_ERR, "Can't add 'ondemand' stream, unsupported format (we only support raw mu-Law and a-Law files right now)\n");
@@ -4300,12 +4371,23 @@ static json_t *janus_streaming_process_synchronous_request(janus_streaming_sessi
 			json_t *rtsp_timeout = json_object_get(root, "rtsp_timeout");
 			json_t *rtsp_conn_timeout = json_object_get(root, "rtsp_conn_timeout");
 			json_t *rtsp_notify_changes = json_object_get(root, "rtsp_notify_changes");
+			const char *rtsp_fmtp_sps = json_string_value(json_object_get(root, "rtsp_fmtp_sps"));
 			if(failerr == NULL)	/* For an old typo, we support the legacy syntax too */
 				failerr = json_object_get(root, "rtsp_check");
 			gboolean doaudio = audio ? json_is_true(audio) : FALSE;
 			gboolean dovideo = video ? json_is_true(video) : FALSE;
 			gboolean doquirk = quirk ? json_is_true(quirk) : FALSE;
 			gboolean notify_changes = rtsp_notify_changes ? json_is_true(rtsp_notify_changes) : FALSE;
+			gboolean fmtp_sps = TRUE;
+			if(rtsp_fmtp_sps) {
+				if(!strcasecmp(rtsp_fmtp_sps, "always")) {
+					fmtp_sps = TRUE;
+				} else if(!strcasecmp(rtsp_fmtp_sps, "never")) {
+					fmtp_sps = FALSE;
+				} else {
+					JANUS_LOG(LOG_WARN, "Unsupported value '%s' for rtsp_fmtp_sps\n", rtsp_fmtp_sps);
+				}
+			}
 			gboolean error_on_failure = failerr ? json_is_true(failerr) : TRUE;
 			if(json_is_true(vkf)) {
 				JANUS_LOG(LOG_WARN, "The videobufferkf property has been deprecated, please refer to bufferkf_ms and/or bufferkf_bytes\n");
@@ -4372,7 +4454,7 @@ static json_t *janus_streaming_process_synchronous_request(janus_streaming_sessi
 					(char *)json_string_value(url),
 					username ? (char *)json_string_value(username) : NULL,
 					password ? (char *)json_string_value(password) : NULL,
-					doquirk, notify_changes,
+					doquirk, notify_changes, fmtp_sps,
 					doaudio, (audiopt ? json_integer_value(audiopt) : -1), acodec, (char *)json_string_value(audiofmtp),
 					dovideo, (videopt ? json_integer_value(videopt) : -1), vcodec, (char *)json_string_value(videofmtp),
 					bufferkf_ms, bufferkf_bytes,
@@ -8033,6 +8115,10 @@ janus_streaming_mountpoint *janus_streaming_create_rtp_source(
 	/* If we need helper threads, spawn them now */
 	GError *error = NULL;
 	char tname[16];
+	if(threads > JANUS_STREAMING_HELPER_THREADS_CAP) {
+		JANUS_LOG(LOG_WARN, "Requested too many helper threads, capping to max (%d)\n", JANUS_STREAMING_HELPER_THREADS_CAP);
+		threads = JANUS_STREAMING_HELPER_THREADS_CAP;
+	}
 	if(threads > 0) {
 		int i=0;
 		for(i=0; i<threads; i++) {
@@ -8108,17 +8194,20 @@ janus_streaming_mountpoint *janus_streaming_create_file_source(
 	}
 	/* TODO We should support something more than raw a-Law and mu-Law streams... */
 #ifdef HAVE_LIBOGG
-	if(!strstr(filename, ".opus") && !strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+	if(!janus_streaming_check_extension(filename, ".opus") &&
+			!janus_streaming_check_extension(filename, ".alaw") &&
+			!janus_streaming_check_extension(filename, ".mulaw")) {
 		JANUS_LOG(LOG_ERR, "Can't add 'file' stream, unsupported format (we only support Opus and raw mu-Law/a-Law files right now)\n");
 #else
-	if(!strstr(filename, ".alaw") && !strstr(filename, ".mulaw")) {
+	if(!janus_streaming_check_extension(filename, ".alaw") &&
+			!janus_streaming_check_extension(filename, ".mulaw")) {
 		JANUS_LOG(LOG_ERR, "Can't add 'file' stream, unsupported format (we only support raw mu-Law and a-Law files right now)\n");
 #endif
 		return NULL;
 	}
 	janus_audiocodec audio_codec = janus_audiocodec_from_name(acodec);
 #ifdef HAVE_LIBOGG
-	if(strstr(filename, ".opus") && audio_codec != JANUS_AUDIOCODEC_OPUS) {
+	if(janus_streaming_check_extension(filename, ".opus") && audio_codec != JANUS_AUDIOCODEC_OPUS) {
 		JANUS_LOG(LOG_ERR, "Can't add 'file' stream, opus file is not associated with an opus rtpmap\n");
 		return NULL;
 	}
@@ -8154,14 +8243,14 @@ janus_streaming_mountpoint *janus_streaming_create_file_source(
 	file_source_source->filename = g_strdup(filename);
 	file_source->source = file_source_source;
 	file_source->source_destroy = (GDestroyNotify)janus_streaming_file_source_free;
-	if(strstr(filename, ".opus")) {
+	if(janus_streaming_check_extension(filename, ".opus")) {
 		file_source_source->opus = TRUE;
 		file_source_source->codecs.pt = apt;
 		file_source_source->codecs.audio_codec = JANUS_AUDIOCODEC_OPUS;
 		file_source_source->codecs.fmtp = afmtp ? g_strdup(afmtp) : NULL;
 	} else {
-		file_source_source->codecs.pt = strstr(filename, ".alaw") ? 8 : 0;
-		file_source_source->codecs.audio_codec = strstr(filename, ".alaw") ? JANUS_AUDIOCODEC_PCMA : JANUS_AUDIOCODEC_PCMU;
+		file_source_source->codecs.pt = janus_streaming_check_extension(filename, ".alaw") ? 8 : 0;
+		file_source_source->codecs.audio_codec = janus_streaming_check_extension(filename, ".alaw") ? JANUS_AUDIOCODEC_PCMA : JANUS_AUDIOCODEC_PCMU;
 	}
 	file_source->viewers = NULL;
 	g_atomic_int_set(&file_source->destroyed, 0);
@@ -8228,39 +8317,39 @@ static int janus_streaming_rtsp_parse_sdp(const char *buffer, const char *name, 
 	/* Parse the SDP now */
 	char pattern[256];
 	g_snprintf(pattern, sizeof(pattern), "m=%s", media);
-	char *m = strstr(buffer, pattern);
+	const char *m = strstr(buffer, pattern);
 	if(m == NULL) {
 		JANUS_LOG(LOG_VERB, "[%s] no media %s...\n", name, media);
 		return -1;
 	}
 	sscanf(m, "m=%*s %*d %*s %d", pt);
-	char *s = strstr(m, "a=control:");
+	const char *s = strstr(m, "a=control:");
 	if(s == NULL) {
 		JANUS_LOG(LOG_ERR, "[%s] no control for %s...\n", name, media);
 		return -1;
 	}
 	sscanf(s, "a=control:%2047s", control);
-	char *r = strstr(m, "a=rtpmap:");
+	const char *r = strstr(m, "a=rtpmap:");
 	if(r != NULL) {
 		if(sscanf(r, "a=rtpmap:%*d%*[ ]%2047[^\r\n]s", rtpmap) != 1) {
 			JANUS_LOG(LOG_ERR, "[%s] cannot parse %s rtpmap...\n", name, media);
 			return -1;
 		}
 	}
-	char *f = strstr(m, "a=fmtp:");
+	const char *f = strstr(m, "a=fmtp:");
 	if(f != NULL) {
 		if(sscanf(f, "a=fmtp:%*d%*[ ]%2047[^\r\n]s", fmtp) != 1) {
 			JANUS_LOG(LOG_ERR, "[%s] cannot parse %s fmtp...\n", name, media);
 			return -1;
 		}
-		char *start = strstr(f, "sprop-parameter-sets=");
+		char *start = (char *)strstr(f, "sprop-parameter-sets=");
 		if(sps != NULL && start != NULL) {
 			start += strlen("sprop-parameter-sets=");
-			char *end = strstr(start, ";");
+			char *end = (char *)strstr(start, ";");
 			if(end == NULL)
-				end = strstr(start, "\r");
+				end = (char *)strstr(start, "\r");
 			if(end == NULL)
-				end = strstr(start, "\n");
+				end = (char *)strstr(start, "\n");
 			if(end) {
 				char c = *end;
 				*end = '\0';
@@ -8272,17 +8361,17 @@ static int janus_streaming_rtsp_parse_sdp(const char *buffer, const char *name, 
 			}
 		}
 	}
-	char *c = strstr(m, "c=IN IP4");
+	char *c = (char *)strstr(m, "c=IN IP4");
 	if(c == NULL) {
 		/* No m-line c= attribute? try in the whole SDP */
-		c = strstr(buffer, "c=IN IP4");
+		c = (char *)strstr(buffer, "c=IN IP4");
 	}
 	char ip[256];
 	in_addr_t mcast = INADDR_ANY;
 	if(c != NULL) {
 		if(sscanf(c, "c=IN IP4 %255[^/]", ip) != 0) {
 			memcpy(host, ip, sizeof(ip));
-			c = strstr(host, "\r\n");
+			c = (char *)strstr(host, "\r\n");
 			if(c)
 				*c = '\0';
 			mcast = inet_addr(ip);
@@ -8331,6 +8420,13 @@ static int janus_streaming_rtsp_connect_to_server(janus_streaming_mountpoint *mp
 		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
 	curl_easy_setopt(curl, CURLOPT_URL, source->rtsp_url);
+	/* The mountpoint URL comes straight from the plugin API: restrict libcurl
+	 * to RTSP so it cannot be pointed at gopher://, file://, ftp://, ... */
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "rtsp,rtsps");
+#else
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_RTSP);
+#endif
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, source->rtsp_timeout);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, source->rtsp_conn_timeout);
 	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 0L);
@@ -8913,9 +9009,13 @@ static int janus_streaming_rtsp_connect_to_server(janus_streaming_mountpoint *mp
 			g_free(stream->codecs.fmtp);
 			stream->codecs.fmtp = source->rtsp_vcodecs.fmtp ? g_strdup(source->rtsp_vcodecs.fmtp) : g_strdup(vfmtp);
 			g_free(stream->h264_spspps);
-			stream->h264_spspps = sps;
+			if(source->rtsp_fmtp_sps) {
+				stream->h264_spspps = sps;
+				stream->h264_spspps_len = spslen;
+			} else {
+				g_free(sps);
+			}
 			sps = NULL;
-			stream->h264_spspps_len = spslen;
 			spslen = 0;
 			g_free(source->rtsp_vhost);
 			source->rtsp_vhost = vsport > 0 ? g_strdup(vhost) : NULL;
@@ -9049,7 +9149,7 @@ static int janus_streaming_rtsp_play(janus_streaming_rtp_source *source) {
 janus_streaming_mountpoint *janus_streaming_create_rtsp_source(
 		uint64_t id, char *id_str, char *name, char *desc, char *metadata,
 		char *url, char *username, char *password,
-		gboolean quirk, gboolean notify_changes,
+		gboolean quirk, gboolean notify_changes, gboolean fmtp_sps,
 		gboolean doaudio, int apt, char *acodec, char *afmtp,
 		gboolean dovideo, int vpt, char *vcodec, char *vfmtp,
 		uint16_t bufferkf_ms, uint32_t bufferkf_bytes,
@@ -9129,6 +9229,7 @@ janus_streaming_mountpoint *janus_streaming_create_rtsp_source(
 	live_rtsp_source->rtsp_stream_uri = NULL;
 	live_rtsp_source->rtsp_quirk = quirk;
 	live_rtsp_source->rtsp_notify_changes = notify_changes;
+	live_rtsp_source->rtsp_fmtp_sps = fmtp_sps;
 	live_rtsp_source->media = NULL;		/* We'll prepare this later */
 	live_rtsp_source->media_byid = g_hash_table_new(NULL, NULL);
 	live_rtsp_source->media_byfd = g_hash_table_new(NULL, NULL);
@@ -9235,7 +9336,7 @@ janus_streaming_mountpoint *janus_streaming_create_rtsp_source(
 janus_streaming_mountpoint *janus_streaming_create_rtsp_source(
 		uint64_t id, char *id_str, char *name, char *desc, char *metadata,
 		char *url, char *username, char *password,
-		gboolean quirk, gboolean notify_changes,
+		gboolean quirk, gboolean notify_changes, gboolean fmtp_sps,
 		gboolean doaudio, int apt, char *audiocodec, char *audiofmtp,
 		gboolean dovideo, int vpt, char *videocodec, char *videofmtp,
 		uint16_t bufferkf_ms, uint32_t bufferkf_bytes,
@@ -10644,7 +10745,7 @@ static void janus_streaming_relay_rtp_packet(gpointer data, gpointer user_data) 
 				/* If we got here, update the RTP header and send the packet */
 				janus_rtp_header_update(packet->data, &s->context, TRUE, 0);
 				char vp8pd[6];
-				if(packet->codec == JANUS_VIDEOCODEC_VP8) {
+				if(packet->codec == JANUS_VIDEOCODEC_VP8 && plen >= (int)sizeof(vp8pd)) {
 					/* For VP8, we save the original payload descriptor, to restore it after */
 					memcpy(vp8pd, payload, sizeof(vp8pd));
 					janus_vp8_simulcast_descriptor_update(payload, plen, &s->vp8_context,
@@ -10672,7 +10773,7 @@ static void janus_streaming_relay_rtp_packet(gpointer data, gpointer user_data) 
 				packet->data->type = packet->ptype;
 				packet->data->timestamp = htonl(packet->timestamp);
 				packet->data->seq_number = htons(packet->seq_number);
-				if(packet->codec == JANUS_VIDEOCODEC_VP8) {
+				if(packet->codec == JANUS_VIDEOCODEC_VP8 && plen >= (int)sizeof(vp8pd)) {
 					/* Restore the original payload descriptor as well, as it will be needed by the next viewer */
 					memcpy(payload, vp8pd, sizeof(vp8pd));
 				}

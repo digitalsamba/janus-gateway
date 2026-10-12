@@ -729,7 +729,7 @@ static void *janus_textroom_handler(void *data);
 static void janus_textroom_hangup_media_internal(janus_plugin_session *handle);
 
 /* JSON serialization options */
-static size_t json_format = JSON_INDENT(3) | JSON_PRESERVE_ORDER;
+static size_t json_format = JSON_COMPACT | JSON_PRESERVE_ORDER;
 
 
 typedef struct janus_textroom_room {
@@ -960,8 +960,8 @@ int janus_textroom_init(janus_callbacks *callback, const char *config_path) {
 				/* Compact, so no spaces between separators */
 				json_format = JSON_COMPACT | JSON_PRESERVE_ORDER;
 			} else {
-				JANUS_LOG(LOG_WARN, "Unsupported JSON format option '%s', using default (indented)\n", item->value);
-				json_format = JSON_INDENT(3) | JSON_PRESERVE_ORDER;
+				JANUS_LOG(LOG_WARN, "Unsupported JSON format option '%s', using default (compact)\n", item->value);
+				json_format = JSON_COMPACT | JSON_PRESERVE_ORDER;
 			}
 		}
 		/* Any admin key to limit who can "create"? */
@@ -1578,12 +1578,29 @@ janus_plugin_result *janus_textroom_handle_incoming_request(janus_plugin_session
 		json_t *username = json_object_get(root, "to");
 		json_t *usernames = json_object_get(root, "tos");
 		if(username && usernames) {
+			janus_refcount_decrease(&participant->ref);
 			janus_mutex_unlock(&textroom->mutex);
 			janus_refcount_decrease(&textroom->ref);
 			JANUS_LOG(LOG_ERR, "Both to and tos array provided\n");
 			error_code = JANUS_TEXTROOM_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Both to and tos array provided");
 			goto msg_response;
+		}
+		if(usernames) {
+			/* Make sure we got strings */
+			size_t i = 0;
+			for(i=0; i<json_array_size(usernames); i++) {
+				json_t *u = json_array_get(usernames, i);
+				if(u == NULL || json_is_null(u) || !json_is_string(u)) {
+					janus_refcount_decrease(&participant->ref);
+					janus_mutex_unlock(&textroom->mutex);
+					janus_refcount_decrease(&textroom->ref);
+					JANUS_LOG(LOG_ERR, "Invalid tos provided\n");
+					error_code = JANUS_TEXTROOM_ERROR_INVALID_ELEMENT;
+					g_snprintf(error_cause, 512, "Invalid tos provided");
+					goto msg_response;
+				}
+			}
 		}
 		json_t *text = json_object_get(root, "text");
 		const char *message = json_string_value(text);
@@ -1693,6 +1710,18 @@ janus_plugin_result *janus_textroom_handle_incoming_request(janus_plugin_session
 					JANUS_LOG(LOG_ERR, "Error initializing CURL context\n");
 				} else {
 					curl_easy_setopt(curl, CURLOPT_URL, textroom->http_backend);
+					/* The backend URL comes straight from the plugin API: restrict libcurl to
+					 * the protocols this feature is documented to use, so that a room owner
+					 * cannot turn the callback into gopher://, file://, ftp://, ... */
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+					curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+					curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+					curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+					curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
+					curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+					curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
 					struct curl_slist *headers = NULL;
 					headers = curl_slist_append(headers, "Accept: application/json");
 					headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -2461,6 +2490,18 @@ janus_plugin_result *janus_textroom_handle_incoming_request(janus_plugin_session
 				JANUS_LOG(LOG_ERR, "Error initializing CURL context\n");
 			} else {
 				curl_easy_setopt(curl, CURLOPT_URL, textroom->http_backend);
+				/* The backend URL comes straight from the plugin API: restrict libcurl to
+				 * the protocols this feature is documented to use, so that a room owner
+				 * cannot turn the callback into gopher://, file://, ftp://, ... */
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+				curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+				curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+				curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+				curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
+				curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+				curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
 				struct curl_slist *headers = NULL;
 				headers = curl_slist_append(headers, "Accept: application/json");
 				headers = curl_slist_append(headers, "Content-Type: application/json");
