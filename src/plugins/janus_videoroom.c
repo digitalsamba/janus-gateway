@@ -11525,6 +11525,11 @@ static void *janus_videoroom_handler(void *data) {
 				 * handle the unsubscribe first, and the subscribe only after that */
 				int changes = 0;
 				size_t i = 0;
+				/* TEST ONLY (SAMBA-9833 repro, never merge): widen the race window */
+				if(g_getenv("JANUS_REPRO_9833")) {
+					JANUS_LOG(LOG_WARN, "[SAMBA-9833 repro] sleeping 300ms before taking the locks\n");
+					g_usleep(300000);
+				}
 				janus_mutex_lock(&subscriber->room->mutex);
 				janus_mutex_lock(&subscriber->streams_mutex);
 				if(unsubscribe) {
@@ -12411,6 +12416,11 @@ static void *janus_videoroom_handler(void *data) {
 				 * notice that no renegotiation happens, we just switch the sources */
 				int changes = 0;
 				gboolean update = FALSE;
+				/* TEST ONLY (SAMBA-9833 repro, never merge): widen the race window */
+				if(g_getenv("JANUS_REPRO_9833")) {
+					JANUS_LOG(LOG_WARN, "[SAMBA-9833 repro] sleeping 300ms before taking the locks\n");
+					g_usleep(300000);
+				}
 				janus_mutex_lock(&subscriber->room->mutex);
 				janus_mutex_lock(&subscriber->streams_mutex);
 				for(i=0; i<json_array_size(feeds); i++) {
