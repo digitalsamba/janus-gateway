@@ -2702,6 +2702,17 @@ static void janus_videoroom_subscriber_free(const janus_refcount *s_ref) {
 	janus_videoroom_subscriber *s = janus_refcount_containerof(s_ref, janus_videoroom_subscriber, ref);
 	/* This subscriber can be destroyed, free all the resources */
 	g_free(s->room_id_str);
+	/* Sanity check: no stream should still be linked to a publisher at this
+	 * point, as publishers would be left with a dangling subscriber pointer */
+	GList *temp = s->streams;
+	while(temp) {
+		janus_videoroom_subscriber_stream *ss = (janus_videoroom_subscriber_stream *)temp->data;
+		if(ss && ss->publisher_streams != NULL) {
+			JANUS_LOG(LOG_FATAL, "Freeing subscriber %p with stream (mid %s) still linked to %d publisher stream(s)\n",
+				s, ss->mid, g_slist_length(ss->publisher_streams));
+		}
+		temp = temp->next;
+	}
 	g_list_free_full(s->streams, (GDestroyNotify)(janus_videoroom_subscriber_stream_destroy));
 	g_hash_table_unref(s->streams_byid);
 	g_hash_table_unref(s->streams_bymid);
